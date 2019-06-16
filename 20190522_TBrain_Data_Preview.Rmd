@@ -1,0 +1,220 @@
+---
+title: ""
+author: "Ling"
+date: "Update : `r format(Sys.time(), '%Y / %m / %d - %H:%M')`"
+output:
+  rmdformats::readthedown:
+     code_folding: hide
+     number_sections: FALSE
+     toc_float:
+       collapsed: FALSE
+---
+
+```{r setup, include=FALSE}
+library(devtools)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(data.table)
+library(rmdformats)
+library(knitr)
+library(DT)
+library(kableExtra)
+library(highcharter)
+library(RColorBrewer)
+library(lubridate)
+library(stringr)
+library(readr)
+library(readxl)
+library(ggplot2)
+library(GGally)
+library(caret)
+
+knitr::opts_chunk$set(echo=TRUE,
+                       cache=FALSE,
+                       prompt=FALSE,
+                       tidy=FALSE,
+                       comment=NA,
+                       message=FALSE,
+                       warning=FALSE,
+                      fig.align = 'center')
+
+dt <- function(data){
+  data %>% 
+    datatable(extensions = 'Buttons', filter = 'top',
+              options = list(dom = 'Bfrtip', scrollX = TRUE,
+                             buttons = c('copy', 'csv', 'excel')), rownames = FALSE)
+}
+```
+
+---
+
+## Dataset {.tabset}
+
+### train
+```{r}
+train <- fread("data/Tbrain-dataset-0510/train.csv")
+# train %>% head(10) %>% View
+train %>% head(10) %>% dt
+```
+
+
+#### city name mapping
+```{r}
+tw_district <- read_excel("data/city_mapping.xlsx", sheet = 2) %>% select(-5)
+train %>% 
+  select(1:33, 235) %>% 
+  left_join(tw_district) %>% 
+  group_by(city, town, city_name, district_name) %>% 
+  summarise(n = n()) %>% View
+```
+
+
+---
+
+#### unit price
+
+```{r}
+train %>% 
+  select(1:33, 235) %>% 
+  mutate(building_age = (txn_dt - building_complete_dt)/365,
+         unit_price = (total_price-ifelse(is.na(parking_price),0,parking_price))/(land_area+building_area-ifelse(is.na(parking_area),0,parking_area))) %>% 
+  left_join(tw_district) %>% 
+  group_by(city, town, city_name, district_name) %>% 
+  summarise(n = n(),
+            avg_unit_price = mean(unit_price, na.rm = TRUE),
+            med_unit_price = median(unit_price, na.rm = TRUE)) %>% 
+  arrange(desc(med_unit_price)) %>% dt
+```
+
+---
+
+```{r}
+train %>% 
+  select(1:33, 235) %>% 
+  left_join(tw_district) %>% 
+  mutate(txn_dt_original = round(txn_dt/365, 2) + 1962.63,
+         txn_dt_year_original = floor(round(txn_dt/365, 2) + 1962.63),
+         txn_dt_month_original = round((txn_dt_original - floor(txn_dt_original))*12, 0),
+         building_complete_dt_original = round(building_complete_dt/365, 2) + 1962.63,
+         building_complete_dt_year_original = floor(round(building_complete_dt/365, 2) + 1962.63),
+         building_complete_dt_month_original = round((building_complete_dt_original - floor(building_complete_dt_original))*12, 0),
+         house_age_original = round((txn_dt - building_complete_dt)/365, 2),
+         house_age_year_original = floor(round((txn_dt - building_complete_dt)/365, 2)),
+         house_age_month_original = round((house_age_original - floor(house_age_original))*12, 0),
+         unit_price = (total_price-ifelse(is.na(parking_price),0,parking_price))/
+           (land_area+building_area-ifelse(is.na(parking_area),0,parking_area))
+  ) %>% 
+  mutate(txn_dt_month_original = ifelse(txn_dt_month_original == 0, 1, txn_dt_month_original),
+         building_complete_dt_month_original = ifelse(building_complete_dt_month_original == 0, 1, building_complete_dt_month_original),
+         house_age_month_original = ifelse(house_age_month_original == 0, 1, house_age_month_original)) %>% 
+  select(34, 46, everything()) -> train_tb
+  # arrange(txn_dt_original %>% desc()) %>% head() %>% View
+
+set.seed(3456)
+train_tb_index <- createDataPartition(train_tb$city, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train_tb_train <- train_tb[ train_tb_index,]
+train_tb_test <- train_tb[-train_tb_index,]
+
+
+```
+
+
+---
+
+#### 
+
+```{r, eval=FALSE, echo=FALSE}
+### test
+train %>% 
+  distinct(city, town, town_area) %>% View
+  group_by(city, town) %>% 
+  tally %>% View
+
+## set 18000 = "1950-01-01"
+train %>% 
+  arrange(txn_dt %>% desc) %>% 
+  mutate(tmp_dt = ymd("2000-01-01")+(txn_dt-18000)) %>% head %>% 
+  select(1:5, tmp_dt) %>% View
+  distinct(city, town_population) %>% View
+  
+tmp <- fread("/Users/hsiaoling/Documents/Team/資料集/data.csv") %>% select(-1)
+tmp %>% 
+  group_by(`主要建材`) %>% 
+  tally %>% View
+```
+
+
+---
+
+### test
+```{r}
+test <- fread("data/Tbrain-dataset-0510/test.csv")
+
+test %>% head(10) %>% dt
+```
+
+---
+
+### submit_test
+```{r}
+submit_test <- fread("data/Tbrain-dataset-0510/submit_test.csv")
+submit_test %>% head(10) %>% dt
+```
+
+
+---
+
+
+```{r, eval=FALSE, echo=FALSE}
+## EDA
+tw_district <- read_excel("data/20190601_TW_district_area.xlsx")
+tw_district %>% 
+  mutate(city_name = substr(`行政區名稱`, 1, 3),
+         district_name = substr(`行政區名稱`, 4,10),
+         area = `面積` %>% as.numeric(),
+         population = `人口數`,
+         population_density = `人口密度`) %>% 
+  select(9:13) -> tw_district
+
+### 用鄉鎮市區面積去對應, 人口數及人口密度皆對應失敗
+train %>% 
+  mutate(town_area = town_area %>% as.numeric()) %>% 
+  group_by(city, town, town_area, town_population, town_population_density) %>% 
+  summarise(nrow=n()) %>% 
+  arrange(city, town) %>% 
+  left_join(tw_district %>% mutate(town_area = area)) %>% 
+  # distinct(city, town, city_name, district_name) %>% 
+  arrange(city, town) -> cityname_map
+
+cityname_map %>% 
+  group_by(city, town) %>% 
+  mutate(n = n()) %>% 
+  write.csv("data/tmp.csv", row.names = FALSE, fileEncoding = "big5")
+
+train %>% 
+  distinct(city, town, town_population) %>% 
+  left_join(tw_district %>% mutate(town_population = population)) %>% View
+  distinct(city, town, city_name, district_name) %>% 
+  arrange(city, town) -> cityname_map2
+  
+train %>% 
+  distinct(city, town, town_population_density) %>% 
+  left_join(tw_district %>% mutate(town_population_density = population_density)) %>% 
+  distinct(city, town, city_name, district_name) %>% 
+  filter(!is.na(city_name)) %>% 
+  arrange(city, town) -> cityname_map2
+
+tw_district <- read_excel("data/city_mapping.xlsx", sheet = 2) %>% select(-5)
+train %>% 
+  select(1:33, 235) %>% 
+  mutate(building_age = (txn_dt - building_complete_dt)/365,
+         unit_price = total_price/(land_area+building_area)) %>% 
+  left_join(tw_district) %>% head %>% View
+```
+
+

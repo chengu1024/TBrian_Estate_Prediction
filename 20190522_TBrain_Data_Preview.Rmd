@@ -58,6 +58,10 @@ train <- fread("data/Tbrain-dataset-0510/train.csv")
 test <- fread("data/Tbrain-dataset-0510/test.csv")
 # train %>% head(10) %>% View
 train %>% head(10) %>% dt
+#### data Preview
+```{r}
+train <- fread("data/Tbrain-dataset-0510/train.csv")
+train %>% head(5) %>% dt
 ```
 
 ---

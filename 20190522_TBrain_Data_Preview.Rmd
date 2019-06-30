@@ -1,5 +1,5 @@
 ---
-title: ""
+title: "TBrain"
 author: "Ling"
 date: "Update : `r format(Sys.time(), '%Y / %m / %d - %H:%M')`"
 output:
@@ -43,14 +43,14 @@ knitr::opts_chunk$set(echo=TRUE,
 dt <- function(data){
   data %>% 
     datatable(extensions = 'Buttons', filter = 'top',
-              options = list(dom = 'Bfrtip', scrollX = TRUE,
+              options = list(dom = 'Bfrtip', scrollX = TRUE, pageLength = 5,
                              buttons = c('copy', 'csv', 'excel')), rownames = FALSE)
 }
 ```
 
 ---
 
-## Dataset {.tabset}
+### EDA {.tabset}
 
 ### Read training and testing data
 ```{r}
@@ -60,21 +60,26 @@ test <- fread("data/Tbrain-dataset-0510/test.csv")
 train %>% head(10) %>% dt
 ```
 
+---
 
 #### city name mapping
+
+> 觀察 training data 裡面的各鄉鎮市區的交易筆數
+
 ```{r}
 tw_district <- read_excel("data/city_mapping.xlsx", sheet = 2) %>% select(-5)
 train %>% 
   select(1:33, 235) %>% 
   left_join(tw_district) %>% 
   group_by(city, town, city_name, district_name) %>% 
-  summarise(n = n()) %>% View
+  summarise(n = n()) %>% dt
 ```
-
 
 ---
 
 #### unit price
+
+> 計算每區房價平均數與中位數
 
 ```{r}
 train %>% 
@@ -86,10 +91,15 @@ train %>%
   summarise(n = n(),
             avg_unit_price = mean(unit_price, na.rm = TRUE),
             med_unit_price = median(unit_price, na.rm = TRUE)) %>% 
-  arrange(desc(med_unit_price)) %>% dt
+  arrange(desc(med_unit_price)) -> tw_district_unit_price
+tw_district_unit_price %>% dt
 ```
 
 ---
+
+#### data manipulating
+
+> 挑選欄位並新增欄位
 
 ```{r}
 train %>% 
@@ -156,6 +166,26 @@ levels(train_tb_train_filter$district_name)
 levels(train_tb_test_filter$district_name)
 
 ```
+         house_age_original = round((txn_dt - building_complete_dt)/365, 2),
+         unit_price = (total_price-ifelse(is.na(parking_price),0,parking_price))/
+           (land_area+building_area-ifelse(is.na(parking_area),0,parking_area))
+  ) %>% 
+  mutate(txn_dt_month_original = ifelse(txn_dt_month_original == 0, 1, txn_dt_month_original),
+         building_complete_dt_month_original = ifelse(building_complete_dt_month_original == 0, 1, building_complete_dt_month_original))  -> train_tb
+train_tb %>% head(10) %>% dt
+```
+
+---
+
+#### correlation plot
+
+```{r}
+ggcorr(train_tb[, c(1,2, 11:20)])
+ggcorr(train_tb[, c(1,2, 21:30)])
+ggcorr(train_tb[, c(1,2, 31:40)])
+ggcorr(train_tb[, c(1,2, 41:44)])
+```
+
 ---
 ```{r}
 ## Deal missing value ##
@@ -244,10 +274,53 @@ train_tb_test_filter %>%
   mutate(z_score = ifelse((abs(total_price_pred - total_price)/total_price) <= 0.1, 1, 0)) %>% 
   summarise(hit_rate = sum(z_score, na.rm = T)/sum(ifelse(is.na(z_score), 0, 1))) %>% View()
   
+### Partition training data
+```{r}
+### select significant var
+train_tb %>% 
+  select(total_price, txn_floor, land_area, building_area,
+         village_income_median, city_name, district_name,
+         town_population_density, doc_rate, master_rate, bachelor_rate, jobschool_rate, highschool_rate,
+         junior_rate, born_rate, divorce_rate, building_complete_dt_year_original,
+         building_complete_dt_month_original, house_age_original)  -> train_tb_select
+
+set.seed(3456)
+train_tb_index <- createDataPartition(train_tb_select$total_price, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train_tb_train <- train_tb_select[train_tb_index,]
+train_tb_test <- train_tb_select[-train_tb_index,]
 ```
 
-
 ---
+
+## Prediction 
+
+### town median
+
+> Rule Based: area size * town's median unit price as total proce
+
+```{r}
+### predicted in train's testing
+train_tb_test %>% 
+  left_join(tw_district_unit_price) %>% 
+  mutate(total_price_pred = (ifelse(is.na(building_area), 0, building_area)+ifelse(is.na(land_area), 0, land_area))*med_unit_price) %>% 
+  select(total_price_pred, total_price, everything()) %>% 
+  mutate(z_score = ifelse((abs(total_price_pred - total_price)/total_price) <= 0.1, 1, 0),
+         mape_pre = abs(total_price_pred - total_price)/total_price) %>% 
+  summarise(hit_rate = sum(z_score, na.rm = T)/sum(ifelse(is.na(z_score), 0, 1)),
+            MAPE = sum(mape_pre, na.rm = T)/sum(ifelse(is.na(mape_pre), 0, 1))) %>% 
+  mutate(score = round(hit_rate, 4)*10000 + (1- ifelse(MAPE>=1, 1, MAPE)))
+```
+
+```{r, eval=FALSE, echo=FALSE}
+### training model
+train_tb_train %>% 
+  ggplot(aes(x = log(total_price))) +
+  geom_density()
+
+lm(log(total_price) ~ ., data = train_tb_train_filter[, -2]) -> training_result
 
 #### 
 
@@ -269,6 +342,29 @@ tmp <- fread("/Users/hsiaoling/Documents/Team/資料集/data.csv") %>% select(-1
 tmp %>% 
   group_by(`主要建材`) %>% 
   tally %>% View
+predict(training_result, train_tb_test_filter) -> testing_result
+
+train_tb_test_filter %>% 
+  mutate(total_price_pred = lm(log(total_price) ~ ., data = train_tb_train_filter[, -2]) %>% 
+           predict(., newdata = train_tb_test_filter)) %>% 
+  select(total_price_pred, total_price, everything()) %>% 
+  mutate(z_score = ifelse((abs(total_price_pred - total_price)/total_price) <= 0.1, 1, 0)) %>% 
+  summarise(hit_rate = sum(z_score, na.rm = T)/sum(ifelse(is.na(z_score), 0, 1))) %>% View()
+```
+
+
+```{r}
+test <- fread("data/Tbrain-dataset-0510/test.csv")
+
+### predicted in real testing
+test %>% 
+  left_join(tw_district_unit_price) %>% 
+  mutate(total_price_pred = (ifelse(is.na(building_area), 0, building_area)+ifelse(is.na(land_area), 0, land_area))*med_unit_price) %>% 
+  mutate(total_price_pred = ifelse(is.na(total_price_pred),0,total_price_pred)) %>% 
+  select(building_id, total_price = total_price_pred) -> testing_result
+
+# testing_result %>% 
+#   write.csv("/Users/hsiaoling/Desktop/Code/Program/TBrain/TBrian_Estate_Prediction/submit_data/20190630_submit_test.csv", row.names = F)
 ```
 
 

@@ -58,10 +58,6 @@ train <- fread("data/Tbrain-dataset-0510/train.csv")
 test <- fread("data/Tbrain-dataset-0510/test.csv")
 # train %>% head(10) %>% View
 train %>% head(10) %>% dt
-#### data Preview
-```{r}
-train <- fread("data/Tbrain-dataset-0510/train.csv")
-train %>% head(5) %>% dt
 ```
 
 ---
@@ -277,9 +273,12 @@ train_tb_test_filter %>%
   select(total_price_pred, total_price, everything()) %>% 
   mutate(z_score = ifelse((abs(total_price_pred - total_price)/total_price) <= 0.1, 1, 0)) %>% 
   summarise(hit_rate = sum(z_score, na.rm = T)/sum(ifelse(is.na(z_score), 0, 1))) %>% View()
-  
-### Partition training data
+```
+
+
+---
 ```{r}
+### Partition training data
 ### select significant var
 train_tb %>% 
   select(total_price, txn_floor, land_area, building_area,

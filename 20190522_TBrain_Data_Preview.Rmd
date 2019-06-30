@@ -101,25 +101,25 @@ train %>%
          building_complete_dt_original = round(building_complete_dt/365, 2) + 1962.63,
          building_complete_dt_year_original = floor(round(building_complete_dt/365, 2) + 1962.63),
          building_complete_dt_month_original = round((building_complete_dt_original - floor(building_complete_dt_original))*12, 0),
-         house_age_original = round((txn_dt - building_complete_dt)/365, 2),
-         unit_price = (total_price-ifelse(is.na(parking_price),0,parking_price))/
-           (land_area+building_area-ifelse(is.na(parking_area),0,parking_area))
-  ) %>% 
+      house_age_original = round((txn_dt - building_complete_dt)/365, 2),
+      unit_price = (total_price-ifelse(is.na(parking_price),0,parking_price))/
+        (land_area+building_area-ifelse(is.na(parking_area),0,parking_area))) %>% 
   mutate(txn_dt_month_original = ifelse(txn_dt_month_original == 0, 1, txn_dt_month_original),
-         building_complete_dt_month_original = ifelse(building_complete_dt_month_original == 0, 1, building_complete_dt_month_original),
-         house_age_month_original = ifelse(house_age_month_original == 0, 1, house_age_month_original)) %>% 
-  select(34, 46, everything()) -> train_tb
+         building_complete_dt_month_original = ifelse(building_complete_dt_month_original == 0, 1,
+                                                      building_complete_dt_month_original)) %>% 
+  select(34, 44, everything()) -> train_tb
   # arrange(txn_dt_original %>% desc()) %>% head() %>% View
 
 set.seed(3456)
 train_tb_index <- createDataPartition(train_tb$town, p = .8, 
-                                  list = FALSE, 
-                                  times = 1)
+                                      list = FALSE, 
+                                      times = 1)
 train_tb %>% 
-  select(total_price, parking_price, txn_floor, city_name, district_name, village_income_median,
+  select(total_price, parking_price, total_floor, txn_floor, city_name, district_name, village, village_income_median,
          town_population_density, doc_rate, master_rate, bachelor_rate, jobschool_rate, highschool_rate,
          junior_rate, born_rate, divorce_rate, 
-         building_complete_dt_year_original, building_complete_dt_month_original, house_age_original) -> train_tb_select
+         building_complete_dt_year_original, building_complete_dt_month_original, house_age_original,
+         lat, lon) -> train_tb_select
 
 train_tb_train <- train_tb_select[train_tb_index,]
 train_tb_test <- train_tb_select[-train_tb_index,]
@@ -154,6 +154,58 @@ train_tb_test_filter %>%
 
 levels(train_tb_train_filter$district_name)
 levels(train_tb_test_filter$district_name)
+
+```
+---
+```{r}
+## Deal missing value ##
+column_name <- NULL
+for(i in 1:ncol(train_tb)){
+  tmp <- ifelse(sum(is.na(train_tb %>% select(i))) != 0, colnames(train_tb %>% select(i)), "NA")
+  column_name <- c(column_name, tmp)
+}
+
+# parking price, parking area(Add parking price to final result after predicted)
+train_tb %>% 
+  filter(!is.na(parking_price), !is.na(parking_area)) %>% 
+  select(city_name, district_name, parking_way, parking_price, parking_area) %>% 
+  mutate(unit_parking_price = parking_price /parking_area) %>% 
+  group_by(city_name, district_name, parking_way) %>% View
+  summarise(avg_unit_parking_price = mean(unit_parking_price, na.rm = T),
+            sd_unit_parking_price = sd(unit_parking_price, na.rm = T),
+            count = n()) %>% View
+  
+# txn_floor(NA fill 99, and create a column is total_bought_floors)
+train_tb %>% 
+  #select(city_name, district_name, total_price, unit_price, total_floor, txn_floor) %>% 
+  mutate(txn_floor = ifelse(is.na(txn_floor), 99, txn_floor),
+         total_bought_floors = ifelse(txn_floor == 99, total_floor, 1)) -> train_tb
+
+# village_income_median
+train_tb %>% 
+  group_by(city_name, district_name, village, village_income_median) %>% 
+  summarise(village_income_median_groupby = median(village_income_median, na.rm = T)) -> train_tb_village_income_median
+
+train_tb %>% 
+  group_by(city_name, district_name, village, village_income_median) %>% 
+  summarise(count = n()) %>% 
+  group_by(city_name, district_name, village, village_income_median) %>% 
+  summarise(count = n()) %>% 
+  filter(is.na(village_income_median)) %>% View
+  
+
+train_tb %>% 
+  select(city_name, district_name, village, village_income_median) %>% 
+  filter(is.na(village_income_median)) %>% View
+  group_by(city_name, district_name, village) %>%
+  mutate(village_income_median = ifelse(!is.na(village_income_median), village_income_median,
+                                        median(village_income_median, na.rm = T))) %>% View
+
+
+train_tb %>% 
+  select(city_name, district_name, village, lat, lon, village_income_median) %>% 
+  distinct() %>% 
+  filter(city_name == "新北市", district_name == "土城區") %>% View
 
 ```
 ---
